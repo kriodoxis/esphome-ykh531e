@@ -1,6 +1,12 @@
 esphome:
   name: test-ykh531e
   friendly_name: YKH531E Test Device
+  platformio_options:
+    build_flags:
+      - "-Werror=deprecated-declarations"
+    # Comment out build_unflags to allow building despite deprecation warnings
+    build_unflags:
+      - "-Wno-error=deprecated-declarations"
 
 esp32:
   board: esp32dev
@@ -31,6 +37,7 @@ external_components:
 remote_transmitter:
   - pin: GPIO14
     carrier_duty_percent: 50%
+    non_blocking: true
     id: ir_transmitter
 
 remote_receiver:

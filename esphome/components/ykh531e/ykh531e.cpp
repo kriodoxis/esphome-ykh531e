@@ -331,8 +331,9 @@ namespace esphome
     climate::ClimateTraits YKH531EClimate::traits()
     {
       auto traits = climate::ClimateTraits();
-      traits.set_supports_current_temperature(this->sensor_ != nullptr);
-      traits.set_supports_action(false);
+      if (this->sensor_ != nullptr) {
+        traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
+      }
       traits.set_visual_min_temperature(YKH531E_TEMP_MIN);
       traits.set_visual_max_temperature(YKH531E_TEMP_MAX);
       traits.set_visual_temperature_step(YKH531E_TEMP_INC);
