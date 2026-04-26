@@ -2,7 +2,7 @@
 
 ESPHome custom component for YKH531E IR remote control protocol. Controls compatible AC units via infrared signals.
 
-Tested with: Frigidaire FHPC102AC1
+Tested with: Frigidaire FHPW122AC1
 
 ## Installation
 
@@ -10,7 +10,7 @@ Add to your ESPHome configuration:
 
 ```yaml
 external_components:
-  - source: github://smazurov/esphome-ykh531e
+  - source: github://kriodoxis/esphome-ykh531e
     components: [ykh531e]
 ```
 
@@ -28,7 +28,10 @@ climate:
     name: "AC Unit"
     supports_heat: false
     supports_cool: true
-    use_fahrenheit: true # Optional: use Fahrenheit instead of Celsius
+    use_fahrenheit: false # Optional: use Fahrenheit instead of Celsius
+    timer_select:
+      name: "AC Unit Timer"
+      icon: mdi:timer-outline
 ```
 
 ## Features
@@ -39,6 +42,7 @@ climate:
 - **Swing**: Vertical only
 - **Presets**: Sleep mode
 - **Units**: Celsius or Fahrenheit
+- **Timers**: Up to 24h timers ON and OFF
 
 ## Hardware Setup
 

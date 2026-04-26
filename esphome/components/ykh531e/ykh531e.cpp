@@ -1,4 +1,5 @@
 #include "ykh531e.h"
+#include "ykh531e_timer_select.h"
 #include "esphome/core/log.h"
 
 namespace esphome
@@ -61,8 +62,7 @@ namespace esphome
 
       // Set temperature based on mode
       // Fan-only and dry modes don't use temperature, so skip temperature encoding
-      if (this->mode != climate::CLIMATE_MODE_FAN_ONLY && 
-          this->mode != climate::CLIMATE_MODE_DRY)
+      if (this->mode != climate::CLIMATE_MODE_FAN_ONLY && this->mode != climate::CLIMATE_MODE_DRY)
       {
         if (this->transmit_fahrenheit_)
         {
@@ -84,8 +84,7 @@ namespace esphome
       }
       else
       {
-        ESP_LOGD(TAG, "Mode %s doesn't use temperature - skipping temperature encoding", 
-                 this->mode == climate::CLIMATE_MODE_FAN_ONLY ? "FAN_ONLY" : "DRY");
+        ESP_LOGD(TAG, "Mode %s doesn't use temperature - skipping temperature encoding", this->mode == climate::CLIMATE_MODE_FAN_ONLY ? "FAN_ONLY" : "DRY");
       }
 
       // byte4: 5 unknown bits and fan speed
@@ -105,6 +104,17 @@ namespace esphome
         break;
       default:
         break;
+      }
+
+      // Timer value encoding (decoded from IR captures):
+      //   byte4 bits[4:0] = whole hours  (0–24)
+      //   byte5           = 0x1E (30) if half-hour remainder, else 0x00
+      if (this->timer_hours_ > 0.0f)
+      {
+        uint8_t whole = (uint8_t)this->timer_hours_;
+        bool half = (this->timer_hours_ - whole) >= 0.5f;
+        ir_message[4] |= (whole & 0x1F);    // bits[4:0]: whole hours, 5 bits covers 0-31h
+        ir_message[5] = half ? 0x1E : 0x00; // bits[4:1] all set = has .5h remainder
       }
 
       // byte6: 2 unknown bits, sleep, 2 unknown bits and mode
@@ -138,8 +148,17 @@ namespace esphome
         break;
       }
 
-      // byte9: 5 unknown bits, power and 2 unknown bits
-      ir_message[9] = this->mode == climate::CLIMATE_MODE_OFF ? 0 : 1 << 5;
+      // byte9: power + timer type
+      bool power_on = (this->mode != climate::CLIMATE_MODE_OFF);
+      ir_message[9] = power_on ? (1 << 5) : 0;
+      if (this->timer_hours_ > 0.0f) {
+          if (power_on) ir_message[9] |= (1 << 6);  // countdown: ON → turn OFF in Xh
+          else          ir_message[9] |= (1 << 7);  // schedule:  OFF → turn ON  in Xh
+      }
+      // ── byte 11: timer-touched flag ───────────────────────────────────────────
+      //   0x05 = normal (bits 2,0 always set)
+      //   0x0D = timer active / timer cancel / timer was interacted with
+      ir_message[11] = (this->timer_hours_ > 0.0f && this->timer_being_set_) ? 0x0D : 0x05;
 
       // byte12: checksum
       uint8_t checksum = 0;
@@ -173,6 +192,43 @@ namespace esphome
       data->item(YKH531E_BIT_MARK, 0);
 
       transmit.perform();
+    }
+
+    void YKH531EClimate::set_timer(float hours)
+    {
+      this->timer_hours_ = hours;
+      this->timer_being_set_ = true;
+      this->transmit_state();
+      this->timer_being_set_ = false;
+    }
+
+    void YKH531EClimate::setup()
+    {
+      climate_ir::ClimateIR::setup();
+      if (this->timer_select_ != nullptr)
+      {
+        this->timer_select_->publish_state("Off");
+      }
+    }
+
+    void YKH531ETimerSelect::control(const std::string &value)
+    {
+      float hours = 0.0f;
+      if (value != "Off")
+      {
+        hours = atof(value.c_str());
+      }
+      ESP_LOGD(TAG, "Timer parsed: %s -> %.2f", value.c_str(), hours);
+      if (this->parent_ != nullptr)
+      {
+        this->parent_->set_timer(hours);
+        this->parent_->publish_state();
+      }
+      this->publish_state(value);
+    }
+
+    void YKH531EClimate::set_timer_select(YKH531ETimerSelect *timer_select) {
+      this->timer_select_ = timer_select;
     }
 
     bool YKH531EClimate::on_receive(remote_base::RemoteReceiveData data)
@@ -293,8 +349,7 @@ namespace esphome
 
         // Only update temperature for modes that use temperature control
         // Fan-only and dry modes don't use temperature
-        if (this->mode != climate::CLIMATE_MODE_FAN_ONLY && 
-            this->mode != climate::CLIMATE_MODE_DRY)
+        if (this->mode != climate::CLIMATE_MODE_FAN_ONLY && this->mode != climate::CLIMATE_MODE_DRY)
         {
           // Check if temperature is in Fahrenheit (bit 49 = byte 6, bit 1)
           bool fahrenheit = (ir_message[6] & 0b00000010) >> 1;
@@ -319,9 +374,23 @@ namespace esphome
         }
         else
         {
-          ESP_LOGV(TAG, "Mode %s doesn't use temperature - preserving current setting", 
-                   this->mode == climate::CLIMATE_MODE_FAN_ONLY ? "FAN_ONLY" : "DRY");
+          ESP_LOGV(TAG, "Mode %s doesn't use temperature - preserving current setting", this->mode == climate::CLIMATE_MODE_FAN_ONLY ? "FAN_ONLY" : "DRY");
         }
+      }
+
+      // ── Timer decode ──────────────────────────────────────────────────────────
+      // byte9 bit6 = countdown active, bit7 = schedule active
+      bool timer_active = (ir_message[9] & 0b11000000) != 0;
+      if (timer_active)
+      {
+        uint8_t whole_hours = ir_message[4] & 0x1F; // 5 bits, was wrongly 0x03
+        bool has_half = (ir_message[5] == 0x1E);
+        this->timer_hours_ = whole_hours + (has_half ? 0.5f : 0.0f);
+        ESP_LOGD(TAG, "RX timer: %.1f hours", this->timer_hours_);
+      }
+      else
+      {
+        this->timer_hours_ = 0.0f;
       }
 
       this->publish_state();
@@ -331,7 +400,8 @@ namespace esphome
     climate::ClimateTraits YKH531EClimate::traits()
     {
       auto traits = climate::ClimateTraits();
-      if (this->sensor_ != nullptr) {
+      if (this->sensor_ != nullptr)
+      {
         traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
       }
       traits.set_visual_min_temperature(YKH531E_TEMP_MIN);
@@ -340,12 +410,12 @@ namespace esphome
 
       // Always support these modes
       traits.set_supported_modes({climate::CLIMATE_MODE_OFF, climate::CLIMATE_MODE_AUTO});
-      
+
       // Always add cool, dry, and fan_only as the hardware supports them
       traits.add_supported_mode(climate::CLIMATE_MODE_COOL);
       traits.add_supported_mode(climate::CLIMATE_MODE_DRY);
       traits.add_supported_mode(climate::CLIMATE_MODE_FAN_ONLY);
-      
+
       // Only add heat if configured in YAML
       if (this->supports_heat_)
         traits.add_supported_mode(climate::CLIMATE_MODE_HEAT);

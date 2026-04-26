@@ -65,6 +65,8 @@ namespace esphome
     static const float YKH531E_TEMP_MAX = 32.0f;
     static const float YKH531E_TEMP_INC = 1.0f;
 
+    class YKH531ETimerSelect;
+
     /// YKH531E Climate IR remote control
     /// Note: Only vertical swing is supported by the hardware
     /// Heat mode is experimental and may not work on all units
@@ -73,8 +75,7 @@ namespace esphome
     public:
       YKH531EClimate()
           : climate_ir::ClimateIR(YKH531E_TEMP_MIN, YKH531E_TEMP_MAX, YKH531E_TEMP_INC, true, true,
-                                  {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM,
-                                   climate::CLIMATE_FAN_HIGH},
+                                  {climate::CLIMATE_FAN_AUTO, climate::CLIMATE_FAN_LOW, climate::CLIMATE_FAN_MEDIUM, climate::CLIMATE_FAN_HIGH},
                                   {climate::CLIMATE_SWING_OFF, climate::CLIMATE_SWING_VERTICAL},
                                   {climate::CLIMATE_PRESET_NONE, climate::CLIMATE_PRESET_SLEEP})
       {
@@ -83,14 +84,20 @@ namespace esphome
 
       /// Set use of Fahrenheit units
       void set_fahrenheit(bool fahrenheit) { this->transmit_fahrenheit_ = fahrenheit; }
+      // ── Timer API (called by YKH531ETimerSelect) ──────────────────────────────
+      void set_timer(float hours);
+      void set_timer_select(YKH531ETimerSelect *timer_select);
+      void setup() override;
 
     protected:
       /// Override traits to provide AUTO mode instead of HEAT_COOL mode
       climate::ClimateTraits traits() override;
+      YKH531ETimerSelect *timer_select_{nullptr};
       void transmit_state() override;
       bool on_receive(remote_base::RemoteReceiveData data) override;
-
       bool transmit_fahrenheit_{false};
+      float timer_hours_{0.0f};
+      bool timer_being_set_{false};
     };
 
   } // namespace ykh531e
